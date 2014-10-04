@@ -1,17 +1,12 @@
-// This program converts a set of images to a leveldb by storing them as Datum
-// proto buffers.
+// This program converts a set of images to a lmdb/leveldb by storing them
+// as Datum proto buffers.
 // Usage:
-//   convert_imageset [-g] ROOTFOLDER/ LISTFILE DB_NAME RANDOM_SHUFFLE[0 or 1]
-//                     [resize_height] [resize_width]
+//   convert_imageset [FLAGS] ROOTFOLDER/ LISTFILE DB_NAME
+//
 // where ROOTFOLDER is the root folder that holds all the images, and LISTFILE
 // should be a list of files as well as their labels, in the format as
 //   subfolder1/file1.JPEG 7
 //   ....
-// if RANDOM_SHUFFLE is 1, a random shuffle will be carried out before we
-// process the file lines.
-// Optional flag -g indicates the images should be read as
-// single-channel grayscale. If omitted, grayscale images will be
-// converted to color.
 
 #include <gflags/gflags.h>
 #include <glog/logging.h>
@@ -38,9 +33,11 @@ DEFINE_bool(gray, false,
     "When this option is on, treat images as grayscale ones");
 DEFINE_bool(shuffle, false,
     "Randomly shuffle the order of images and their labels");
-DEFINE_string(backend, "leveldb", "The backend for storing the result");
+DEFINE_string(backend, "lmdb", "The backend for storing the result");
 DEFINE_int32(resize_width, 0, "Width images are resized to");
 DEFINE_int32(resize_height, 0, "Height images are resized to");
+DEFINE_bool(check_size, false,
+    "When this option is on, check that all the datum have the same size");
 
 int main(int argc, char** argv) {
   ::google::InitGoogleLogging(argv[0]);
@@ -63,6 +60,7 @@ int main(int argc, char** argv) {
   }
 
   bool is_color = !FLAGS_gray;
+  bool check_size = FLAGS_check_size;
   std::ifstream infile(argv[2]);
   std::vector<std::pair<string, int> > lines;
   string filename;
@@ -102,7 +100,8 @@ int main(int argc, char** argv) {
     LOG(INFO) << "Opening leveldb " << db_path;
     leveldb::Status status = leveldb::DB::Open(
         options, db_path, &db);
-    CHECK(status.ok()) << "Failed to open leveldb " << db_path;
+    CHECK(status.ok()) << "Failed to open leveldb " << db_path
+        << ". Is it already existing?";
     batch = new leveldb::WriteBatch();
   } else if (db_backend == "lmdb") {  // lmdb
     LOG(INFO) << "Opening lmdb " << db_path;
@@ -116,7 +115,7 @@ int main(int argc, char** argv) {
     CHECK_EQ(mdb_txn_begin(mdb_env, NULL, 0, &mdb_txn), MDB_SUCCESS)
         << "mdb_txn_begin failed";
     CHECK_EQ(mdb_open(mdb_txn, NULL, 0, &mdb_dbi), MDB_SUCCESS)
-        << "mdb_open failed";
+        << "mdb_open failed. Does the lmdb already exist? ";
   } else {
     LOG(FATAL) << "Unknown db backend " << db_backend;
   }
@@ -135,13 +134,15 @@ int main(int argc, char** argv) {
         lines[line_id].second, resize_height, resize_width, is_color, &datum)) {
       continue;
     }
-    if (!data_size_initialized) {
-      data_size = datum.channels() * datum.height() * datum.width();
-      data_size_initialized = true;
-    } else {
-      const string& data = datum.data();
-      CHECK_EQ(data.size(), data_size) << "Incorrect data field size "
-          << data.size();
+    if (check_size) {
+      if (!data_size_initialized) {
+        data_size = datum.channels() * datum.height() * datum.width();
+        data_size_initialized = true;
+      } else {
+        const string& data = datum.data();
+        CHECK_EQ(data.size(), data_size) << "Incorrect data field size "
+            << data.size();
+      }
     }
     // sequential
     snprintf(key_cstr, kMaxKeyLength, "%08d_%s", line_id,

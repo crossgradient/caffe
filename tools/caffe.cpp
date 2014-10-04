@@ -87,28 +87,36 @@ int train() {
   caffe::SolverParameter solver_param;
   caffe::ReadProtoFromTextFileOrDie(FLAGS_solver, &solver_param);
 
-  LOG(INFO) << "Starting Optimization";
-  caffe::SGDSolver<float> solver(solver_param);
+  // If the gpu flag is not provided, allow the mode and device to be set
+  // in the solver prototxt.
+  if (FLAGS_gpu < 0
+      && solver_param.solver_mode() == caffe::SolverParameter_SolverMode_GPU) {
+    FLAGS_gpu = solver_param.device_id();
+  }
 
   // Set device id and mode
   if (FLAGS_gpu >= 0) {
     LOG(INFO) << "Use GPU with device ID " << FLAGS_gpu;
     Caffe::SetDevice(FLAGS_gpu);
     Caffe::set_mode(Caffe::GPU);
-  } else if (!solver_param.has_solver_mode()) {
+  } else {
     LOG(INFO) << "Use CPU.";
     Caffe::set_mode(Caffe::CPU);
   }
 
+  LOG(INFO) << "Starting Optimization";
+  shared_ptr<caffe::Solver<float> >
+    solver(caffe::GetSolver<float>(solver_param));
+
   if (FLAGS_snapshot.size()) {
     LOG(INFO) << "Resuming from " << FLAGS_snapshot;
-    solver.Solve(FLAGS_snapshot);
+    solver->Solve(FLAGS_snapshot);
   } else if (FLAGS_weights.size()) {
     LOG(INFO) << "Finetuning from " << FLAGS_weights;
-    solver.net()->CopyTrainedLayersFrom(FLAGS_weights);
-    solver.Solve();
+    solver->net()->CopyTrainedLayersFrom(FLAGS_weights);
+    solver->Solve();
   } else {
-    solver.Solve();
+    solver->Solve();
   }
   LOG(INFO) << "Optimization Done.";
   return 0;
@@ -227,7 +235,10 @@ int time() {
     const caffe::string& layername = layers[i]->layer_param().name();
     timer.Start();
     for (int j = 0; j < FLAGS_iterations; ++j) {
-      layers[i]->Forward(bottom_vecs[i], &top_vecs[i]);
+      // Although Reshape should be essentially free, we include it here
+      // so that we will notice Reshape performance bugs.
+      layers[i]->Reshape(bottom_vecs[i], top_vecs[i]);
+      layers[i]->Forward(bottom_vecs[i], top_vecs[i]);
     }
     LOG(INFO) << layername << "\tforward: " << timer.MilliSeconds() <<
         " milliseconds.";
@@ -241,7 +252,7 @@ int time() {
     timer.Start();
     for (int j = 0; j < FLAGS_iterations; ++j) {
       layers[i]->Backward(top_vecs[i], bottom_need_backward[i],
-                          &bottom_vecs[i]);
+                          bottom_vecs[i]);
     }
     LOG(INFO) << layername << "\tbackward: "
         << timer.MilliSeconds() << " milliseconds.";

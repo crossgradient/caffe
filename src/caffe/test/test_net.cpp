@@ -7,6 +7,7 @@
 #include "gtest/gtest.h"
 
 #include "caffe/common.hpp"
+#include "caffe/filler.hpp"
 #include "caffe/net.hpp"
 #include "caffe/util/math_functions.hpp"
 
@@ -533,6 +534,68 @@ class NetTest : public MultiDeviceTest<TypeParam> {
     InitNetFromProtoString(proto);
   }
 
+  virtual void InitReshapableNet() {
+    const string& proto =
+        "name: 'ReshapableNetwork' "
+        "input: 'data' "
+        "input_dim: 1 "
+        "input_dim: 3 "
+        "input_dim: 100 "
+        "input_dim: 100 "
+        "layers: { "
+        "  name: 'conv1' "
+        "  type: CONVOLUTION "
+        "  bottom: 'data' "
+        "  top: 'conv1' "
+        "  convolution_param { "
+        "    num_output: 5 "
+        "    kernel_size: 3 "
+        "    stride: 2 "
+        "    weight_filler { "
+        "      type: 'gaussian' "
+        "      std: 0.01 "
+        "    } "
+        "    bias_filler { "
+        "      type: 'constant' "
+        "      value: 0.2 "
+        "    } "
+        "  } "
+        "} "
+        "layers: { "
+        "  name: 'relu1' "
+        "  type: RELU "
+        "  bottom: 'conv1' "
+        "  top: 'conv1' "
+        "} "
+        "layers: { "
+        "  name: 'pool1' "
+        "  type: POOLING "
+        "  bottom: 'conv1' "
+        "  top: 'pool1' "
+        "  pooling_param { "
+        "    pool: MAX "
+        "    kernel_size: 2 "
+        "    stride: 2 "
+        "  } "
+        "} "
+        "layers: { "
+        "  name: 'norm1' "
+        "  type: LRN "
+        "  bottom: 'pool1' "
+        "  top: 'norm1' "
+        "  lrn_param { "
+        "    local_size: 3 "
+        "  } "
+        "} "
+        "layers: { "
+        "  name: 'softmax' "
+        "  type: SOFTMAX "
+        "  bottom: 'norm1' "
+        "  top: 'softmax' "
+        "} ";
+    InitNetFromProtoString(proto);
+  }
+
   int seed_;
   shared_ptr<Net<Dtype> > net_;
 };
@@ -930,7 +993,7 @@ TYPED_TEST(NetTest, TestSharedWeightsUpdate) {
   // Check that data blobs of shared weights share the same location in memory.
   EXPECT_EQ(ip1_weights->cpu_data(), ip2_weights->cpu_data());
   // Check that diff blobs of shared weights are at different locations in
-  // locations.  (The diffs should be accumulated at update time.)
+  // memory.  (The diffs should be accumulated at update time.)
   EXPECT_NE(ip1_weights->cpu_diff(), ip2_weights->cpu_diff());
   this->net_->Forward(bottom);
   this->net_->Backward();
@@ -1003,6 +1066,54 @@ TYPED_TEST(NetTest, TestSharedWeightsUpdate) {
     EXPECT_NE(actual_updated_params1[i], actual_updated_params2[i]);
     EXPECT_NE(expected_updated_params, expected_updated_params1);
   }
+}
+
+TYPED_TEST(NetTest, TestSharedWeightsResume) {
+  typedef typename TypeParam::Dtype Dtype;
+
+  // Create a net with weight sharing; Update it once.
+  Caffe::set_random_seed(this->seed_);
+  this->InitDiffDataSharedWeightsNet();
+  vector<Blob<Dtype>*> bottom;
+  EXPECT_EQ(this->net_->layer_names()[1], "innerproduct1");
+  EXPECT_EQ(this->net_->layer_names()[2], "innerproduct2");
+  Blob<Dtype>* ip1_weights = this->net_->layers()[1]->blobs()[0].get();
+  Blob<Dtype>* ip2_weights = this->net_->layers()[2]->blobs()[0].get();
+  // Check that data blobs of shared weights share the same location in memory.
+  EXPECT_EQ(ip1_weights->cpu_data(), ip2_weights->cpu_data());
+  // Check that diff blobs of shared weights are at different locations in
+  // memory.  (The diffs should be accumulated at update time.)
+  EXPECT_NE(ip1_weights->cpu_diff(), ip2_weights->cpu_diff());
+  this->net_->ForwardBackward(bottom);
+  this->net_->Update();
+  Blob<Dtype> shared_params;
+  const bool kReshape = true;
+  const bool kCopyDiff = false;
+  shared_params.CopyFrom(*ip1_weights, kCopyDiff, kReshape);
+  const int count = ip1_weights->count();
+
+  // Write the net to a NetParameter, as in Solver::Snapshot.
+  NetParameter net_param;
+  this->net_->ToProto(&net_param);
+
+  // Reinitialize the net and copy parameters from net_param, as in
+  // Solver::Restore.
+  Caffe::set_random_seed(this->seed_);
+  this->InitDiffDataSharedWeightsNet();
+  this->net_->CopyTrainedLayersFrom(net_param);
+  ip1_weights = this->net_->layers()[1]->blobs()[0].get();
+  ip2_weights = this->net_->layers()[2]->blobs()[0].get();
+  ASSERT_FALSE(NULL == ip1_weights);
+  ASSERT_FALSE(NULL == ip2_weights);
+  EXPECT_NE(ip1_weights, ip2_weights);
+  // Check that data blobs of shared weights share the same location in memory.
+  EXPECT_EQ(ip1_weights->cpu_data(), ip2_weights->cpu_data());
+  for (int i = 0; i < count; ++i) {
+    EXPECT_FLOAT_EQ(shared_params.cpu_data()[i], ip1_weights->cpu_data()[i]);
+  }
+  // Check that diff blobs of shared weights are at different locations in
+  // memory.  (The diffs should be accumulated at update time.)
+  EXPECT_NE(ip1_weights->cpu_diff(), ip2_weights->cpu_diff());
 }
 
 TYPED_TEST(NetTest, TestParamPropagateDown) {
@@ -1177,10 +1288,10 @@ TEST_F(FilterNetTest, TestFilterLeNetTrainTest) {
       "  top: 'label' "
       "  data_param { "
       "    source: 'mnist-train-leveldb' "
-      "    transform_param { "
-      "      scale: 0.00390625 "
-      "    } "
       "    batch_size: 64 "
+      "  } "
+      "  transform_param { "
+      "    scale: 0.00390625 "
       "  } "
       "  include: { phase: TRAIN } "
       "} "
@@ -1191,10 +1302,10 @@ TEST_F(FilterNetTest, TestFilterLeNetTrainTest) {
       "  top: 'label' "
       "  data_param { "
       "    source: 'mnist-test-leveldb' "
-      "    transform_param { "
-      "      scale: 0.00390625 "
-      "    } "
       "    batch_size: 100 "
+      "  } "
+      "  transform_param { "
+      "    scale: 0.00390625 "
       "  } "
       "  include: { phase: TEST } "
       "} "
@@ -1260,10 +1371,10 @@ TEST_F(FilterNetTest, TestFilterLeNetTrainTest) {
       "  top: 'label' "
       "  data_param { "
       "    source: 'mnist-train-leveldb' "
-      "    transform_param { "
-      "      scale: 0.00390625 "
-      "    } "
       "    batch_size: 64 "
+      "  } "
+      "  transform_param { "
+      "    scale: 0.00390625 "
       "  } "
       "  include: { phase: TRAIN } "
       "} "
@@ -1319,10 +1430,10 @@ TEST_F(FilterNetTest, TestFilterLeNetTrainTest) {
       "  top: 'label' "
       "  data_param { "
       "    source: 'mnist-test-leveldb' "
-      "    transform_param { "
-      "      scale: 0.00390625 "
-      "    } "
       "    batch_size: 100 "
+      "  } "
+      "  transform_param { "
+      "    scale: 0.00390625 "
       "  } "
       "  include: { phase: TEST } "
       "} "
@@ -2026,6 +2137,64 @@ TEST_F(FilterNetTest, TestFilterInOutByExcludeMultiRule) {
       "} ";
   this->RunFilterNetTest(input_proto_train, output_proto_train);
   this->RunFilterNetTest(input_proto_test, output_proto_test);
+}
+
+TYPED_TEST(NetTest, TestReshape) {
+  typedef typename TypeParam::Dtype Dtype;
+  // We set up bottom blobs of two different sizes, switch between
+  // them, and check that forward and backward both run and the results
+  // are the same.
+  Caffe::set_random_seed(this->seed_);
+  Caffe::set_mode(Caffe::CPU);
+  FillerParameter filler_param;
+  filler_param.set_std(1);
+  GaussianFiller<Dtype> filler(filler_param);
+  Blob<Dtype> blob1(4, 3, 9, 11);
+  Blob<Dtype> blob2(2, 3, 12, 10);
+  filler.Fill(&blob1);
+  filler.Fill(&blob2);
+
+  this->InitReshapableNet();
+  Blob<Dtype>* input_blob = this->net_->input_blobs()[0];
+  Blob<Dtype>* output_blob = this->net_->output_blobs()[0];
+  input_blob->Reshape(blob1.num(), blob1.channels(), blob1.height(),
+      blob1.width());
+  caffe_copy(blob1.count(), blob1.cpu_data(), input_blob->mutable_cpu_data());
+  this->net_->ForwardPrefilled();
+  // call backward just to make sure it runs
+  this->net_->Backward();
+  Blob<Dtype> output1(output_blob->num(), output_blob->channels(),
+      output_blob->height(), output_blob->width());
+  caffe_copy(output1.count(), output_blob->cpu_data(),
+      output1.mutable_cpu_data());
+
+  input_blob->Reshape(blob2.num(), blob2.channels(), blob2.height(),
+      blob2.width());
+  caffe_copy(blob2.count(), blob2.cpu_data(), input_blob->mutable_cpu_data());
+  this->net_->ForwardPrefilled();
+  this->net_->Backward();
+  Blob<Dtype> output2(output_blob->num(), output_blob->channels(),
+      output_blob->height(), output_blob->width());
+  caffe_copy(output2.count(), output_blob->cpu_data(),
+      output2.mutable_cpu_data());
+
+  input_blob->Reshape(blob1.num(), blob1.channels(), blob1.height(),
+      blob1.width());
+  caffe_copy(blob1.count(), blob1.cpu_data(), input_blob->mutable_cpu_data());
+  this->net_->ForwardPrefilled();
+  this->net_->Backward();
+  for (int i = 0; i < output1.count(); ++i) {
+    CHECK_EQ(*(output1.cpu_data() + i), *(output_blob->cpu_data() + i));
+  }
+
+  input_blob->Reshape(blob2.num(), blob2.channels(), blob2.height(),
+      blob2.width());
+  caffe_copy(blob2.count(), blob2.cpu_data(), input_blob->mutable_cpu_data());
+  this->net_->ForwardPrefilled();
+  this->net_->Backward();
+  for (int i = 0; i < output2.count(); ++i) {
+    CHECK_EQ(*(output2.cpu_data() + i), *(output_blob->cpu_data() + i));
+  }
 }
 
 }  // namespace caffe

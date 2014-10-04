@@ -1,97 +1,188 @@
 #include <string>
 
 #include "caffe/layer.hpp"
+#include "caffe/layer_factory.hpp"
 #include "caffe/proto/caffe.pb.h"
 #include "caffe/vision_layers.hpp"
 
 namespace caffe {
 
-// A function to get a specific layer from the specification given in
-// LayerParameter. Ideally this would be replaced by a factory pattern,
-// but we will leave it this way for now.
+// GetLayer() defines the overall layer factory. The Get*Layer() functions
+// define factories for layers with multiple computational engines.
+
+// Get convolution layer according to engine.
 template <typename Dtype>
-Layer<Dtype>* GetLayer(const LayerParameter& param) {
-  const string& name = param.name();
-  const LayerParameter_LayerType& type = param.type();
-  switch (type) {
-  case LayerParameter_LayerType_ACCURACY:
-    return new AccuracyLayer<Dtype>(param);
-  case LayerParameter_LayerType_ABSVAL:
-    return new AbsValLayer<Dtype>(param);
-  case LayerParameter_LayerType_ARGMAX:
-    return new ArgMaxLayer<Dtype>(param);
-  case LayerParameter_LayerType_BNLL:
-    return new BNLLLayer<Dtype>(param);
-  case LayerParameter_LayerType_CONCAT:
-    return new ConcatLayer<Dtype>(param);
-  case LayerParameter_LayerType_CONVOLUTION:
-    return new ConvolutionLayer<Dtype>(param);
-  case LayerParameter_LayerType_DATA:
-    return new DataLayer<Dtype>(param);
-  case LayerParameter_LayerType_DROPOUT:
-    return new DropoutLayer<Dtype>(param);
-  case LayerParameter_LayerType_DUMMY_DATA:
-    return new DummyDataLayer<Dtype>(param);
-  case LayerParameter_LayerType_EUCLIDEAN_LOSS:
-    return new EuclideanLossLayer<Dtype>(param);
-  case LayerParameter_LayerType_ELTWISE:
-    return new EltwiseLayer<Dtype>(param);
-  case LayerParameter_LayerType_FLATTEN:
-    return new FlattenLayer<Dtype>(param);
-  case LayerParameter_LayerType_HDF5_DATA:
-    return new HDF5DataLayer<Dtype>(param);
-  case LayerParameter_LayerType_HDF5_OUTPUT:
-    return new HDF5OutputLayer<Dtype>(param);
-  case LayerParameter_LayerType_HINGE_LOSS:
-    return new HingeLossLayer<Dtype>(param);
-  case LayerParameter_LayerType_IMAGE_DATA:
-    return new ImageDataLayer<Dtype>(param);
-  case LayerParameter_LayerType_IM2COL:
-    return new Im2colLayer<Dtype>(param);
-  case LayerParameter_LayerType_INFOGAIN_LOSS:
-    return new InfogainLossLayer<Dtype>(param);
-  case LayerParameter_LayerType_INNER_PRODUCT:
-    return new InnerProductLayer<Dtype>(param);
-  case LayerParameter_LayerType_LRN:
-    return new LRNLayer<Dtype>(param);
-  case LayerParameter_LayerType_MEMORY_DATA:
-    return new MemoryDataLayer<Dtype>(param);
-  case LayerParameter_LayerType_MVN:
-    return new MVNLayer<Dtype>(param);
-  case LayerParameter_LayerType_MULTINOMIAL_LOGISTIC_LOSS:
-    return new MultinomialLogisticLossLayer<Dtype>(param);
-  case LayerParameter_LayerType_POOLING:
-    return new PoolingLayer<Dtype>(param);
-  case LayerParameter_LayerType_POWER:
-    return new PowerLayer<Dtype>(param);
-  case LayerParameter_LayerType_RELU:
-    return new ReLULayer<Dtype>(param);
-  case LayerParameter_LayerType_SIGMOID:
-    return new SigmoidLayer<Dtype>(param);
-  case LayerParameter_LayerType_SIGMOID_CROSS_ENTROPY_LOSS:
-    return new SigmoidCrossEntropyLossLayer<Dtype>(param);
-  case LayerParameter_LayerType_SLICE:
-    return new SliceLayer<Dtype>(param);
-  case LayerParameter_LayerType_SOFTMAX:
-    return new SoftmaxLayer<Dtype>(param);
-  case LayerParameter_LayerType_SOFTMAX_LOSS:
-    return new SoftmaxWithLossLayer<Dtype>(param);
-  case LayerParameter_LayerType_SPLIT:
-    return new SplitLayer<Dtype>(param);
-  case LayerParameter_LayerType_TANH:
-    return new TanHLayer<Dtype>(param);
-  case LayerParameter_LayerType_WINDOW_DATA:
-    return new WindowDataLayer<Dtype>(param);
-  case LayerParameter_LayerType_NONE:
-    LOG(FATAL) << "Layer " << name << " has unspecified type.";
-  default:
-    LOG(FATAL) << "Layer " << name << " has unknown type " << type;
+Layer<Dtype>* GetConvolutionLayer(
+    const LayerParameter& param) {
+  ConvolutionParameter_Engine engine = param.convolution_param().engine();
+  if (engine == ConvolutionParameter_Engine_DEFAULT) {
+    engine = ConvolutionParameter_Engine_CAFFE;
+#ifdef USE_CUDNN
+    engine = ConvolutionParameter_Engine_CUDNN;
+#endif
   }
-  // just to suppress old compiler warnings.
-  return (Layer<Dtype>*)(NULL);
+  if (engine == ConvolutionParameter_Engine_CAFFE) {
+    return new ConvolutionLayer<Dtype>(param);
+#ifdef USE_CUDNN
+  } else if (engine == ConvolutionParameter_Engine_CUDNN) {
+    return new CuDNNConvolutionLayer<Dtype>(param);
+#endif
+  } else {
+    LOG(FATAL) << "Layer " << param.name() << " has unknown engine.";
+  }
 }
 
-template Layer<float>* GetLayer(const LayerParameter& param);
-template Layer<double>* GetLayer(const LayerParameter& param);
+// Get pooling layer according to engine.
+template <typename Dtype>
+Layer<Dtype>* GetPoolingLayer(const LayerParameter& param) {
+  PoolingParameter_Engine engine = param.pooling_param().engine();
+  if (engine == PoolingParameter_Engine_DEFAULT) {
+    engine = PoolingParameter_Engine_CAFFE;
+#ifdef USE_CUDNN
+    engine = PoolingParameter_Engine_CUDNN;
+#endif
+  }
+  if (engine == PoolingParameter_Engine_CAFFE) {
+    return new PoolingLayer<Dtype>(param);
+#ifdef USE_CUDNN
+  } else if (engine == PoolingParameter_Engine_CUDNN) {
+    PoolingParameter p_param = param.pooling_param();
+    if (p_param.pad_h() || p_param.pad_w() || param.top_size() > 1) {
+      LOG(INFO) << "CUDNN does not support padding or multiple tops. "
+                << "Using Caffe's own pooling layer.";
+      return new PoolingLayer<Dtype>(param);
+    }
+    return new CuDNNPoolingLayer<Dtype>(param);
+#endif
+  } else {
+    LOG(FATAL) << "Layer " << param.name() << " has unknown engine.";
+  }
+}
+
+// Get relu layer according to engine.
+template <typename Dtype>
+Layer<Dtype>* GetReLULayer(const LayerParameter& param) {
+  ReLUParameter_Engine engine = param.relu_param().engine();
+  if (engine == ReLUParameter_Engine_DEFAULT) {
+    engine = ReLUParameter_Engine_CAFFE;
+#ifdef USE_CUDNN
+    engine = ReLUParameter_Engine_CUDNN;
+#endif
+  }
+  if (engine == ReLUParameter_Engine_CAFFE) {
+    return new ReLULayer<Dtype>(param);
+#ifdef USE_CUDNN
+  } else if (engine == ReLUParameter_Engine_CUDNN) {
+    return new CuDNNReLULayer<Dtype>(param);
+#endif
+  } else {
+    LOG(FATAL) << "Layer " << param.name() << " has unknown engine.";
+  }
+}
+
+// Get sigmoid layer according to engine.
+template <typename Dtype>
+Layer<Dtype>* GetSigmoidLayer(const LayerParameter& param) {
+  SigmoidParameter_Engine engine = param.sigmoid_param().engine();
+  if (engine == SigmoidParameter_Engine_DEFAULT) {
+    engine = SigmoidParameter_Engine_CAFFE;
+#ifdef USE_CUDNN
+    engine = SigmoidParameter_Engine_CUDNN;
+#endif
+  }
+  if (engine == SigmoidParameter_Engine_CAFFE) {
+    return new SigmoidLayer<Dtype>(param);
+#ifdef USE_CUDNN
+  } else if (engine == SigmoidParameter_Engine_CUDNN) {
+    return new CuDNNSigmoidLayer<Dtype>(param);
+#endif
+  } else {
+    LOG(FATAL) << "Layer " << param.name() << " has unknown engine.";
+  }
+}
+
+// Get tanh layer according to engine.
+template <typename Dtype>
+Layer<Dtype>* GetTanHLayer(const LayerParameter& param) {
+  TanHParameter_Engine engine = param.tanh_param().engine();
+  if (engine == TanHParameter_Engine_DEFAULT) {
+    engine = TanHParameter_Engine_CAFFE;
+#ifdef USE_CUDNN
+    engine = TanHParameter_Engine_CUDNN;
+#endif
+  }
+  if (engine == TanHParameter_Engine_CAFFE) {
+    return new TanHLayer<Dtype>(param);
+#ifdef USE_CUDNN
+  } else if (engine == TanHParameter_Engine_CUDNN) {
+    return new CuDNNTanHLayer<Dtype>(param);
+#endif
+  } else {
+    LOG(FATAL) << "Layer " << param.name() << " has unknown engine.";
+  }
+}
+
+// Get softmax layer according to engine.
+template <typename Dtype>
+Layer<Dtype>* GetSoftmaxLayer(const LayerParameter& param) {
+  SoftmaxParameter_Engine engine = param.softmax_param().engine();
+  if (engine == SoftmaxParameter_Engine_DEFAULT) {
+    engine = SoftmaxParameter_Engine_CAFFE;
+#ifdef USE_CUDNN
+    engine = SoftmaxParameter_Engine_CUDNN;
+#endif
+  }
+  if (engine == SoftmaxParameter_Engine_CAFFE) {
+    return new SoftmaxLayer<Dtype>(param);
+#ifdef USE_CUDNN
+  } else if (engine == SoftmaxParameter_Engine_CUDNN) {
+    return new CuDNNSoftmaxLayer<Dtype>(param);
+#endif
+  } else {
+    LOG(FATAL) << "Layer " << param.name() << " has unknown engine.";
+  }
+}
+
+// Layers that have a specific creator function.
+REGISTER_LAYER_CREATOR(CONVOLUTION, GetConvolutionLayer);
+REGISTER_LAYER_CREATOR(POOLING, GetPoolingLayer);
+REGISTER_LAYER_CREATOR(RELU, GetReLULayer);
+REGISTER_LAYER_CREATOR(SIGMOID, GetSigmoidLayer);
+REGISTER_LAYER_CREATOR(SOFTMAX, GetSoftmaxLayer);
+REGISTER_LAYER_CREATOR(TANH, GetTanHLayer);
+
+// Layers that use their constructor as their default creator.
+REGISTER_LAYER_CLASS(ACCURACY, AccuracyLayer);
+REGISTER_LAYER_CLASS(ABSVAL, AbsValLayer);
+REGISTER_LAYER_CLASS(ARGMAX, ArgMaxLayer);
+REGISTER_LAYER_CLASS(BNLL, BNLLLayer);
+REGISTER_LAYER_CLASS(CONCAT, ConcatLayer);
+REGISTER_LAYER_CLASS(CONTRASTIVE_LOSS, ContrastiveLossLayer);
+REGISTER_LAYER_CLASS(DATA, DataLayer);
+REGISTER_LAYER_CLASS(DROPOUT, DropoutLayer);
+REGISTER_LAYER_CLASS(DUMMY_DATA, DummyDataLayer);
+REGISTER_LAYER_CLASS(EUCLIDEAN_LOSS, EuclideanLossLayer);
+REGISTER_LAYER_CLASS(ELTWISE, EltwiseLayer);
+REGISTER_LAYER_CLASS(EXP, ExpLayer);
+REGISTER_LAYER_CLASS(FLATTEN, FlattenLayer);
+REGISTER_LAYER_CLASS(HDF5_DATA, HDF5DataLayer);
+REGISTER_LAYER_CLASS(HDF5_OUTPUT, HDF5OutputLayer);
+REGISTER_LAYER_CLASS(HINGE_LOSS, HingeLossLayer);
+REGISTER_LAYER_CLASS(IMAGE_DATA, ImageDataLayer);
+REGISTER_LAYER_CLASS(IM2COL, Im2colLayer);
+REGISTER_LAYER_CLASS(INFOGAIN_LOSS, InfogainLossLayer);
+REGISTER_LAYER_CLASS(INNER_PRODUCT, InnerProductLayer);
+REGISTER_LAYER_CLASS(LRN, LRNLayer);
+REGISTER_LAYER_CLASS(MEMORY_DATA, MemoryDataLayer);
+REGISTER_LAYER_CLASS(MVN, MVNLayer);
+REGISTER_LAYER_CLASS(MULTINOMIAL_LOGISTIC_LOSS, MultinomialLogisticLossLayer);
+REGISTER_LAYER_CLASS(POWER, PowerLayer);
+REGISTER_LAYER_CLASS(SILENCE, SilenceLayer);
+REGISTER_LAYER_CLASS(SIGMOID_CROSS_ENTROPY_LOSS, SigmoidCrossEntropyLossLayer);
+REGISTER_LAYER_CLASS(SLICE, SliceLayer);
+REGISTER_LAYER_CLASS(SOFTMAX_LOSS, SoftmaxWithLossLayer);
+REGISTER_LAYER_CLASS(SPLIT, SplitLayer);
+REGISTER_LAYER_CLASS(THRESHOLD, ThresholdLayer);
+REGISTER_LAYER_CLASS(WINDOW_DATA, WindowDataLayer);
 
 }  // namespace caffe
