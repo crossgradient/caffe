@@ -125,7 +125,7 @@ def main(argv):
 
     # Save
     np.save(args.output_file, predictions)
-    np.save('names_'+args.output_file, filenames)
+    np.save(args.output_file + '_names', filenames)
 
 if __name__ == '__main__':
     main(sys.argv)
