@@ -5,6 +5,7 @@ classify.py is an out-of-the-box image classifer callable from the command line.
 By default it configures and runs the Caffe reference ImageNet model.
 """
 import numpy as np
+import pandas as pd
 import os
 import sys
 import argparse
@@ -109,6 +110,10 @@ def main(argv):
     args.input_file = os.path.expanduser(args.input_file)
     if args.input_file.endswith('npy'):
         inputs = np.load(args.input_file)
+    elif args.input_file.endswith('txt'):
+        in_df = pd.io.parsers.read_csv(args.input_file,sep='\t',header=None,names=['file','label'])
+        inputs = [caffe.io.load_image(im_f,color=False)
+                 for im_f in in_df.file.values] 
     elif os.path.isdir(args.input_file):
         filenames = glob.glob(args.input_file + '/*.' + args.ext)
         inputs =[caffe.io.load_image(im_f,color=False)
