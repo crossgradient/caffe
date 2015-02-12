@@ -135,7 +135,7 @@ def main(argv):
                  for im_f in currentBatch.file.values]
     	# Classify.
     	start = time.time()
-    	predictions = classifier.predict(inputs, not args.center_only)
+    	predictions = classifier.predict(inputs, False, False) # not args.center_only)
     	print "Done in %.2f s." % (time.time() - start)
 
         # average them
