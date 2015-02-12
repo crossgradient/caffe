@@ -11,6 +11,7 @@ import sys
 import argparse
 import glob
 import time
+from string import rsplit
 
 import caffe
 
@@ -127,12 +128,12 @@ def main(argv):
     for uid in uniqueIds :
 
         currentBatch = in_df[in_df.id == uid]
-        currentBatch['file'] = currentBatch['file'].apply(lambda(x):'/mnt/crossgradient/plankton/proctest/12129/'+x)
+        fullPath = currentBatch['file'].apply(lambda(x):'/mnt/crossgradient/plankton/data/proctest/12129/'+x)
     
-	print "Classifying batch" + str(uid)
+	print "Classifying batch " + str(uid)
 
         inputs = [caffe.io.load_image(im_f,color=False)
-                 for im_f in currentBatch.file.values]
+                 for im_f in fullPath.values]
     	# Classify.
     	start = time.time()
     	predictions = classifier.predict(inputs, False, False) # not args.center_only)
