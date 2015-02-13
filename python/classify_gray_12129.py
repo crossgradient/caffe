@@ -120,8 +120,8 @@ def main(argv):
     else:
         inputs = [caffe.io.load_image(args.input_file,color=False)]
 
-    all_preds = []
-    all_preds_names = []
+    all_preds = None
+    all_preds_names = None
     uniqueIds = in_df.id.unique()
     print "uniquesIds : " + str(len(uniqueIds))
     uniqueIdsSplit = np.split(uniqueIds,10)
@@ -142,8 +142,24 @@ def main(argv):
     	print "Done in %.2f s." % (time.time() - start)
 
         # average them
-        all_preds.append(predictions.mean(axis=0))
-	all_preds_names.append(currentBatch['file'].apply(lambda(x):rsplit(x,'_',1)[1]).unique()[0])
+	predictions_df = pd.DataFrame(predictions)
+        newBatch = currentBatch.join(predictions_df)
+	batchAvg = newBatch.groupby(['id']).mean()
+	batchAvg_arr = batchAvg.as_matrix()
+
+	if all_preds == None :
+		all_preds = batchAvg_arr
+	else :
+		all_preds = np.vstack((all_preds,batchAvg_arr))
+
+        #all_preds.append(batchAvg_arr)
+        currentBatch['fileId'] = currentBatch['file'].apply(lambda(x):rsplit(x,'_',1)[1])
+        batchNames = currentBatch.groupby('id').max()
+	if all_preds_names == None :
+		all_preds_names = batchNames.fileId.values
+	else : 
+		all_preds_names = np.vstack((all_preds_names,batchNames.fileId.values))
+	#all_preds_names.append(currentBatch['file'].apply(lambda(x):rsplit(x,'_',1)[1]).unique()[0])
         #currentPred = {}
         #currentPred['file'] = currentBatch['file'].apply(lambda(x):rsplit(x,'_',1)[1]).unique()[0]
         #currentPred['pred'] = predictions.mean(axis=0)
