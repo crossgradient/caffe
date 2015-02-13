@@ -124,9 +124,9 @@ def main(argv):
     all_preds_names = None
     uniqueIds = in_df.id.unique()
     print "uniquesIds : " + str(len(uniqueIds))
-    uniqueIdsSplit = np.split(uniqueIds,10)
+    uniqueIdsSplit = np.split(uniqueIds,5)
     
-    for currentId in range(0,10) :
+    for currentId in range(0,5) :
         
         currentSplit = uniqueIdsSplit[currentId]
         currentBatch = in_df[in_df.id.isin(currentSplit)]
@@ -143,7 +143,7 @@ def main(argv):
 
         # average them
 	predictions_df = pd.DataFrame(predictions)
-        newBatch = currentBatch.join(predictions_df)
+	newBatch = pd.concat([currentBatch.reset_index(),predictions_df],axis=1)
 	batchAvg = newBatch.groupby(['id']).mean()
 	batchAvg_arr = batchAvg.as_matrix()
 
@@ -152,18 +152,13 @@ def main(argv):
 	else :
 		all_preds = np.vstack((all_preds,batchAvg_arr))
 
-        #all_preds.append(batchAvg_arr)
         currentBatch['fileId'] = currentBatch['file'].apply(lambda(x):rsplit(x,'_',1)[1])
         batchNames = currentBatch.groupby('id').max()
+	
 	if all_preds_names == None :
 		all_preds_names = batchNames.fileId.values
 	else : 
-		all_preds_names = np.vstack((all_preds_names,batchNames.fileId.values))
-	#all_preds_names.append(currentBatch['file'].apply(lambda(x):rsplit(x,'_',1)[1]).unique()[0])
-        #currentPred = {}
-        #currentPred['file'] = currentBatch['file'].apply(lambda(x):rsplit(x,'_',1)[1]).unique()[0]
-        #currentPred['pred'] = predictions.mean(axis=0)
-        #all_preds.append(currentPred)
+		all_preds_names = np.hstack((all_preds_names,batchNames.fileId.values))
 	
     np.save(args.output_file, all_preds)
     np.save(args.output_file + '_names', all_preds_names)
