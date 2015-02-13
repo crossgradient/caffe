@@ -124,9 +124,9 @@ def main(argv):
     all_preds_names = None
     uniqueIds = in_df.id.unique()
     print "uniquesIds : " + str(len(uniqueIds))
-    uniqueIdsSplit = np.split(uniqueIds,5)
+    uniqueIdsSplit = np.split(uniqueIds,10)
     
-    for currentId in range(0,5) :
+    for currentId in range(0,10) :
         
         currentSplit = uniqueIdsSplit[currentId]
         currentBatch = in_df[in_df.id.isin(currentSplit)]
@@ -159,7 +159,9 @@ def main(argv):
 		all_preds_names = batchNames.fileId.values
 	else : 
 		all_preds_names = np.hstack((all_preds_names,batchNames.fileId.values))
-	
+
+	sys.stdout.flush()	
+    
     np.save(args.output_file, all_preds)
     np.save(args.output_file + '_names', all_preds_names)
 
