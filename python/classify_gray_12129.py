@@ -124,13 +124,15 @@ def main(argv):
     all_preds_names = []
     uniqueIds = in_df.id.unique()
     print "uniquesIds : " + str(len(uniqueIds))
+    uniqueIdsSplit = np.split(uniqueIds,10)
     
-    for uid in uniqueIds :
-
-        currentBatch = in_df[in_df.id == uid]
+    for currentId in range(0,10) :
+        
+        currentSplit = uniqueIdsSplit[currentId]
+        currentBatch = in_df[in_df.id.isin(currentSplit)]
         fullPath = currentBatch['file'].apply(lambda(x):'/mnt/crossgradient/plankton/data/proctest/12129/'+x)
     
-	print "Classifying batch " + str(uid)
+	print "Classifying batch " + str(currentId)
 
         inputs = [caffe.io.load_image(im_f,color=False)
                  for im_f in fullPath.values]
