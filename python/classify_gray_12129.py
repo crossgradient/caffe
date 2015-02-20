@@ -11,6 +11,7 @@ import sys
 import argparse
 import glob
 import time
+from string import rsplit
 
 import caffe
 
@@ -119,33 +120,48 @@ def main(argv):
     else:
         inputs = [caffe.io.load_image(args.input_file,color=False)]
 
-    all_preds = []
-    all_preds_names = []
+    all_preds = None
+    all_preds_names = None
     uniqueIds = in_df.id.unique()
     print "uniquesIds : " + str(len(uniqueIds))
+    uniqueIdsSplit = np.split(uniqueIds,10)
     
-    for uid in uniqueIds :
-
-        currentBatch = in_df[in_df.id == uid]
-        currentBatch['file'] = currentBatch['file'].apply(lambda(x):'/mnt/crossgradient/plankton/proctest/12129/'+x)
+    for currentId in range(0,10) :
+        
+        currentSplit = uniqueIdsSplit[currentId]
+        currentBatch = in_df[in_df.id.isin(currentSplit)]
+        fullPath = currentBatch['file'].apply(lambda(x):'/mnt/crossgradient/plankton/data/proctest/12129/'+x)
     
-	print "Classifying batch" + str(uid)
+	print "Classifying batch " + str(currentId)
 
         inputs = [caffe.io.load_image(im_f,color=False)
-                 for im_f in currentBatch.file.values]
+                 for im_f in fullPath.values]
     	# Classify.
     	start = time.time()
     	predictions = classifier.predict(inputs, False, False) # not args.center_only)
     	print "Done in %.2f s." % (time.time() - start)
 
         # average them
-        all_preds.append(predictions.mean(axis=0))
-	all_preds_names.append(currentBatch['file'].apply(lambda(x):rsplit(x,'_',1)[1]).unique()[0])
-        #currentPred = {}
-        #currentPred['file'] = currentBatch['file'].apply(lambda(x):rsplit(x,'_',1)[1]).unique()[0]
-        #currentPred['pred'] = predictions.mean(axis=0)
-        #all_preds.append(currentPred)
+	predictions_df = pd.DataFrame(predictions)
+	newBatch = pd.concat([currentBatch.reset_index(),predictions_df],axis=1)
+	batchAvg = newBatch.groupby(['id']).mean()
+	batchAvg_arr = batchAvg.as_matrix()
+
+	if all_preds == None :
+		all_preds = batchAvg_arr
+	else :
+		all_preds = np.vstack((all_preds,batchAvg_arr))
+
+        currentBatch['fileId'] = currentBatch['file'].apply(lambda(x):rsplit(x,'_',1)[1])
+        batchNames = currentBatch.groupby('id').max()
 	
+	if all_preds_names == None :
+		all_preds_names = batchNames.fileId.values
+	else : 
+		all_preds_names = np.hstack((all_preds_names,batchNames.fileId.values))
+
+	sys.stdout.flush()	
+    
     np.save(args.output_file, all_preds)
     np.save(args.output_file + '_names', all_preds_names)
 
