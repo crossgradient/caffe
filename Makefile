@@ -278,7 +278,9 @@ endif
 ifeq ($(USE_CUDNN), 1)
 	LIBRARIES += cudnn
 	COMMON_FLAGS += -DUSE_CUDNN
+	CUDDN_LIBS ?= /usr/local/lib/cudnn-R1 
 endif
+LIBRARY_LIBS += $(CUDNN_LIBS)
 
 # CPU-only configuration
 ifeq ($(CPU_ONLY), 1)

@@ -11,8 +11,9 @@ import sys
 import argparse
 import glob
 import time
-
+from string import rsplit
 import caffe
+from numpy import shape, mean
 
 
 def main(argv):
@@ -119,19 +120,25 @@ def main(argv):
     else:
         inputs = [caffe.io.load_image(args.input_file,color=False)]
 
-    #labels = np.load('labels.npy').astype('string')
+    labels = np.load('labels.npy').astype('string')
 
-    #labelsLookup = {}
-    #i = 0
-    #print labels
-    #for l in labels:
-    #    labelsLookup[l] = i
-    #    i = i+1
+    labelsLookup = {}
+    i = 0
+    print labels
+    for l in labels:
+        labelsLookup[l] = i
+        i = i+1
 
-    w = []
+    def makePng(x):
+        name_parts = rsplit(x,'.',1)
+        return name_parts[0] + '.jpg'
+
+    in_df['png'] = in_df['file'].apply(makePng)
+
+    w = None 
     f = []
-    in_df['fullfile'] = in_df['file'].apply(lambda(x): '../../data/12130/test/' + x) 
-    batchSize = (512*11)
+    in_df['fullfile'] = in_df['file'].apply(lambda(x): '../../data/12130/test2/' + x) 
+    batchSize = 13040
     batches = len(in_df) / batchSize
     for i in range(0,batches) :
         start = time.time()
@@ -139,15 +146,26 @@ def main(argv):
         inputs = [caffe.io.load_image(im_f,color=False) for im_f in currentBatch.fullfile.values]
         predictions = classifier.predict(inputs, False, False)
 	#print predictions
-        w.append(np.argmax(predictions,axis=1))
-        print w
-	f.append(currentBatch.fullfile.values)
+        if w is None :
+		w = predictions
+	else : 
+		w = np.append(w,predictions,axis=0)
+        #print w
+	f.append(currentBatch.png.values)
         print "Done in %.2f s." % (time.time() - start)
-    w_ = np.array(w).flatten()
-    f_ =np.array(f).flatten()
-    preds_df = pd.DataFrame(np.transpose(np.array([f_,w_])),columns=['file','label']) 
+    #w_ = np.array(w).flatten()
+    fileNames_df = pd.DataFrame(np.array(f).flatten())
+    #print fileNames_df
+    preds_df = pd.DataFrame(w,columns=labels)
+    #print shape(preds_df)
+    #cleanNames = pd.DataFrame(fileNames_df[0].apply(doTrim))
+    foo = fileNames_df.join(preds_df)
+    foo.rename(columns={0:'image'}, inplace=True)
+    colz = np.concatenate([['image'],labels])
+
+    #preds_df = pd.DataFrame(np.transpose(np.array([f_,w_])),columns=['file','label']) 
     #preds_df['fullfile'] = preds_df['file'].apply(lambda(x): '../../data/12130/test/' + x)
-    preds_df.to_csv(args.output_file,index=False,header=False, sep=' ',columns=['file','label'])
+    foo.to_csv(args.output_file,index=False,header=True, sep=',',columns=colz)
 
 if __name__ == '__main__':
     main(sys.argv)
